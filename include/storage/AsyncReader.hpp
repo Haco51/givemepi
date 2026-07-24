@@ -79,7 +79,6 @@ private:
     std::condition_variable queueChanged_;
     std::deque<std::shared_ptr<AsyncReadOperation>> queue_;
     std::vector<std::thread> workers_;
-    std::mutex managerMutex_;
     std::atomic<std::size_t> activeCount_{0};
     std::atomic<std::uint64_t> completedCount_{0};
     std::atomic<std::uint64_t> failedCount_{0};

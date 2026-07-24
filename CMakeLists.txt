@@ -49,6 +49,9 @@ option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 
 option(ENABLE_BENCHMARKS "Build standalone benchmark executables" OFF)
 
+find_library(LZ4_LIBRARY NAMES lz4 REQUIRED)
+link_libraries(${LZ4_LIBRARY})
+
 
 if(ENABLE_ASAN)
 

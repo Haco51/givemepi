@@ -304,13 +304,19 @@
 
 [x] Async Spill/Reload Performance Baseline (PR-0027)
 
-[ ] Concurrent I/O Execution (PR-0028)
+[x] Concurrent I/O Execution (PR-0028)
 
-[ ] Compression Backend Optimization (PR-0028)
+[x] PR-0028 Functional Storage Pipeline Verification
 
-[ ] NUMA and Huge Pages Optimization (PR-0028)
+[x] Platform Applicability Audit (PR-0028)
 
-[ ] Separate file-read, CRC32C, and GMP decode timings
+[ ] Compression Backend Optimization and Selection (PR-0029)
+
+[x] LZ4 Compression Backend and Durable Round-trip (PR-0028)
+
+[ ] NUMA, Huge Pages, and Affinity Optimization (PR-0029)
+
+[ ] Separate file-read, CRC32C, and GMP decode timings (PR-0029)
 
 [ ] Cold-cache versus warm-cache reload benchmark
 
@@ -322,11 +328,11 @@
 
 [ ] Large-data ASan/UBSan round-trip validation
 
-[ ] PR-0028 High-Performance Measurement Contract
+[x] PR-0028 High-Performance Measurement Contract
 
 [ ] Independent Reader/Writer Concurrency Benchmark
 
-[ ] I/O, CRC32C, Codec, and GMP Decode Timing Breakdown
+[ ] I/O, CRC32C, Codec, and GMP Decode Timing Breakdown (PR-0029)
 
 [ ] Buffer/Data-Movement Optimization Validation
 

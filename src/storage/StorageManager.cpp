@@ -29,19 +29,37 @@ void StorageManager::publishIndex(const ChunkIndex& next)
 ChunkId StorageManager::store(const Chunk& chunk)
 {
     const auto& identity = chunk.metadata.identity;
-    if (index_.contains(identity))
-        throw std::invalid_argument("duplicate chunk identity in storage manager");
+    const ChunkId id = identity.deterministicFilename();
+    {
+        std::lock_guard lock(indexMutex_);
+        if (index_.contains(identity) || !inFlightStores_.insert(id).second)
+            throw std::invalid_argument(
+                "duplicate chunk identity in storage manager");
+    }
 
-    const ChunkId id = store_.store(chunk);
-    ChunkIndex next = index_;
     try
     {
+        static_cast<void>(store_.store(chunk));
+        std::lock_guard lock(indexMutex_);
+        ChunkIndex next = index_;
         next.add(chunk.metadata);
         publishIndex(next);
+        inFlightStores_.erase(id);
     }
     catch (...)
     {
-        store_.remove(id);
+        {
+            std::lock_guard lock(indexMutex_);
+            try
+            {
+                static_cast<void>(store_.remove(id));
+            }
+            catch (...)
+            {
+                // Preserve the original store/publication failure.
+            }
+            inFlightStores_.erase(id);
+        }
         throw;
     }
     return id;
@@ -49,8 +67,12 @@ ChunkId StorageManager::store(const Chunk& chunk)
 
 std::optional<Chunk> StorageManager::load(const ChunkIdentity& identity) const
 {
-    if (!index_.contains(identity)) return std::nullopt;
-    const auto entry = index_.at(identity);
+    ChunkIndexEntry entry;
+    {
+        std::lock_guard lock(indexMutex_);
+        if (!index_.contains(identity)) return std::nullopt;
+        entry = index_.at(identity);
+    }
     const auto loaded = store_.reloadAndVerify(entry.storageFile);
     if (!loaded.has_value()) return std::nullopt;
     if (loaded->metadata.identity != identity)
@@ -63,12 +85,18 @@ std::optional<Chunk> StorageManager::load(const ChunkIdentity& identity) const
 
 bool StorageManager::contains(const ChunkIdentity& identity) const noexcept
 {
-    if (!index_.contains(identity)) return false;
-    return store_.contains(index_.at(identity).storageFile);
+    std::optional<ChunkId> storageFile;
+    {
+        std::lock_guard lock(indexMutex_);
+        if (index_.contains(identity))
+            storageFile = index_.at(identity).storageFile;
+    }
+    return storageFile.has_value() && store_.contains(*storageFile);
 }
 
 bool StorageManager::remove(const ChunkIdentity& identity)
 {
+    std::lock_guard lock(indexMutex_);
     if (!index_.contains(identity)) return false;
     const auto id = index_.at(identity).storageFile;
     if (!store_.remove(id)) return false;
@@ -82,6 +110,7 @@ StorageSnapshot StorageManager::snapshot(
     const std::vector<std::pair<ChunkId, std::uint64_t>>& residentChunks
 ) const
 {
+    std::lock_guard lock(indexMutex_);
     StorageSnapshot snapshot;
     snapshot.indexedChunks = index_.size();
     snapshot.storedBytes = index_.storedBytes();
@@ -98,6 +127,7 @@ EvictionPlan StorageManager::planEvictions(
     std::uint64_t neededBytes
 ) const
 {
+    std::lock_guard lock(indexMutex_);
     return store_.planEvictions(residentChunks, residentSet, mergeDistanceMap, neededBytes);
 }
 

@@ -57,7 +57,29 @@ int main()
         return 1;
     }
 
+    const auto compressedDirectory = directory.string() + "-lz4";
+    std::filesystem::remove_all(compressedDirectory, ec);
+    StoragePolicy compressedPolicy = policy;
+    compressedPolicy.directory = compressedDirectory;
+    compressedPolicy.compression = CompressionAlgorithm::lz4;
+    ChunkStore compressedStore(compressedPolicy);
+    const auto compressedMetadata = ChunkCodec::createMetadata(
+        chunkIdentity, p, q, t, CompressionAlgorithm::lz4);
+    const Chunk compressedChunk{compressedMetadata, p, q, t};
+    const auto compressedId = compressedStore.store(compressedChunk);
+    const auto compressedLoaded = compressedStore.reloadAndVerify(compressedId);
+    if (!compressedLoaded.has_value()
+        || compressedLoaded->metadata.compression != CompressionAlgorithm::lz4
+        || compressedLoaded->p.compare(p) != 0
+        || compressedLoaded->q.compare(q) != 0
+        || compressedLoaded->t.compare(t) != 0)
+    {
+        std::cerr << "ChunkStore LZ4 round trip failed\n";
+        return 1;
+    }
+
     std::filesystem::remove_all(directory, ec);
+    std::filesystem::remove_all(compressedDirectory, ec);
     std::cout << "ChunkStore OK\n";
     return 0;
 }

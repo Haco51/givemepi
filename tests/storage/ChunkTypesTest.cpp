@@ -93,16 +93,6 @@ int main()
                 1,
                 ChunkChecksumAlgorithm::crc32c,
                 0,
-                CompressionAlgorithm::lz4
-            ));
-        })
-        || !throws<std::invalid_argument>([&identity]() {
-            static_cast<void>(ChunkMetadata::create(
-                identity,
-                1,
-                1,
-                ChunkChecksumAlgorithm::crc32c,
-                0,
                 CompressionAlgorithm::none,
                 2
             ));

@@ -32,7 +32,7 @@ int main()
     const Chunk chunk{
         ChunkCodec::createMetadata(identity, p, q, t), p, q, t};
 
-    AsyncChunkWriter writer(manager, 1, 1);
+    AsyncChunkWriter writer(manager, 4, 4);
     const auto handle = writer.submit(chunk);
     handle.wait();
     assert(handle.valid());

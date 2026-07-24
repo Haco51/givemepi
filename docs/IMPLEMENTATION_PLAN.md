@@ -21,6 +21,11 @@ Agent-authored plans are added or changed here only after user approval.
 | PR-0021 | P/Q/T checkpoint block foundation | Complete |
 | PR-0022 | Checkpoint integrity verification | Planned |
 | PR-0023 | Progress snapshot and reporting | Planned |
+| PR-0025 | Runtime storage foundation | Complete |
+| PR-0026 | Synchronous out-of-core stabilization | Complete |
+| PR-0027 | Asynchronous storage pipeline | Complete |
+| PR-0028 | Concurrent storage pipeline implementation | Verification/commit pending |
+| PR-0029 | Measurement and bottleneck optimization | Planned |
 
 ---
 
@@ -862,3 +867,74 @@ versioned CRC32C verification manifest
 - Select the next PR boundary with the user before implementation.
 - If large-scale verification latency becomes a priority, benchmark parallel
   execution of independent BBP samples while keeping algorithms thread-free.
+
+---
+
+## PR-0028: Concurrent Storage Pipeline Implementation
+
+### Goal
+
+Implement concurrent storage execution without changing the PR-0027 durable
+storage, lifecycle, progress, or synchronous fallback contracts.
+
+### Approved Scope
+
+- protect StorageManager index publication and in-flight identities while
+  allowing file operations to overlap;
+- remove unnecessary manager-wide serialization from async reader/writer
+  workers;
+- move encoded Chunk ownership into the async spill queue where safe;
+- add a bounded LZ4 codec with durable round-trip and CRC validation;
+- audit platform applicability without enabling unmeasured NUMA, HugeTLB, THP,
+  or affinity policy by default.
+
+### Verification
+
+- full build and 64-test CTest suite;
+- sync/async P/Q/T equality and lifecycle failure coverage;
+- async multi-chunk spill/reload benchmark;
+- none/LZ4 durable round-trip and metadata validation;
+- `git diff --check` and documentation synchronization.
+
+### Definition of Done
+
+- Functional changes are separated from PR-0029 measurement-only changes.
+- PR-0028 docs, checklist, changelog, and decisions match the implementation.
+- The verified change set is committed and pushed before PR-0029 begins.
+
+### Next Contributor TODO
+
+Split out any PR-0029-only timing or benchmark changes, run the final PR-0028
+verification command set, then commit and push PR-0028. Do not begin CRC,
+buffer, queue, or platform tuning in this PR.
+
+---
+
+## PR-0029: Measurement and Bottleneck Optimization
+
+### Goal
+
+Build a reproducible performance baseline on top of the committed PR-0028
+pipeline, identify stage-level bottlenecks, and apply only benchmark-proven
+optimizations.
+
+### Approved Sequence
+
+1. Fix Release environment and workload/acceptance metadata.
+2. Complete file, CRC32C, codec, GMP, index, and queue telemetry.
+3. Run 100 MiB/512 MiB/1 GiB single- and multi-chunk matrix with sync/async,
+   worker 1/2/4/8, queue 1/4/16/64, cold/warm cache, five repetitions, and
+   p50/p95 summaries.
+4. Analyze CRC/read/GMP/buffer/queue/peak-RSS bottlenecks.
+5. Implement bounded buffer reuse, streaming, CRC/read/GMP improvements, and
+   queue adjustments one at a time.
+6. Validate large-data Release, ASan/UBSan, restart/integrity, and sync/async
+   equivalence.
+7. Evaluate NUMA, Huge Pages, and affinity only on suitable hardware and only
+   when measurements show a benefit.
+
+### Next Contributor TODO
+
+Start from the committed PR-0028 baseline. Keep raw benchmark samples beside
+summary statistics and reject any optimization that changes canonical bytes,
+P/Q/T values, lifecycle behavior, or memory-budget guarantees.

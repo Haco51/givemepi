@@ -91,7 +91,8 @@ void ChunkMetadata::validate() const
         );
     }
 
-    if (compression != CompressionAlgorithm::none)
+    if (compression != CompressionAlgorithm::none
+        && compression != CompressionAlgorithm::lz4)
     {
         throw std::invalid_argument(
             "Runtime chunk compression is not implemented"

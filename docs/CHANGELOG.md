@@ -658,3 +658,28 @@
 - Added a staged PR-0028 high-performance roadmap covering reproducible
   measurement, concurrent I/O, data movement/compression, and NUMA/Huge Pages
   acceptance gates.
+- Enabled real concurrent async storage execution: distinct chunk file
+  operations can overlap while StorageManager index publication remains
+  synchronized. The benchmark now accepts worker and queue arguments and uses
+  process-isolated temporary directories.
+- Reduced async spill data movement by moving Chunk payload ownership into the
+  writer queue instead of copying GMP P/Q/T values at submission.
+- Added a bounded LZ4 compression backend with durable ChunkStore round-trip,
+  metadata validation, CRC coverage, and CI dependency setup. Full none-vs-LZ4
+  workload benchmarking remains a PR-0029 follow-up.
+- Added compression selection to the storage throughput benchmark. A current
+  100 MiB single-chunk run measured none at 99.66 MiB and 3.27 s total versus
+  LZ4 at 70.05 MiB and 2.74 s total; the full workload matrix remains required.
+
+### Verification
+
+- Verified the PR-0028 storage pipeline with a clean Debug build and all 64
+  CTest targets passing.
+- Verified the async multi-chunk path at 1,000,000 digits with four workers
+  and queue capacity four: 15 spills, 15 reloads, 27 MiB peak RSS, and a
+  successful P-bit result.
+- Verified 512 MiB none/LZ4 single-chunk round trips and recorded the current
+  platform audit: one NUMA node, no explicit HugeTLB pages, and no default
+  affinity or system-wide THP override.
+- Separated PR-0028 functional implementation from PR-0029 repeatable
+  workload measurement, bottleneck optimization, and large-data acceptance.

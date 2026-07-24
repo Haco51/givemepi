@@ -33,7 +33,7 @@ int main()
         ChunkCodec::createMetadata(identity, p, q, t), p, q, t};
     static_cast<void>(manager.store(chunk));
 
-    AsyncChunkReader reader(manager, 1, 1);
+    AsyncChunkReader reader(manager, 4, 4);
     auto handle = reader.loadAsync(identity);
     handle.wait();
     assert(handle.valid());

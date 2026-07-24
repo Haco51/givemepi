@@ -97,6 +97,12 @@ Phase 7
 
 Storage
 
+[x] PR-0025 Runtime Storage Foundation
+[x] PR-0026 Synchronous Out-of-Core Stabilization
+[x] PR-0027 Asynchronous Storage Pipeline
+[x] PR-0028 Concurrent Storage Pipeline Implementation
+[ ] PR-0029 Measurement and Bottleneck Optimization
+
 ----------------------
 
 Phase 8

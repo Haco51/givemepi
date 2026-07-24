@@ -34,7 +34,15 @@ Use Huge Pages only if beneficial.
 
 Compression only for Out-of-Core Layer.
 
-For the PR-0028 storage path, establish a reproducible measurement contract
+For PR-0029 storage work, establish a reproducible measurement contract
+before changing queueing, buffering, compression, NUMA placement, or page
+size. Report cold/warm cache, worker count, queue capacity, p50/p95 latency,
+throughput, peak RSS, and separate file/CRC/codec/GMP costs.
+
+The staged roadmap and acceptance gates are in
+`docs/PR-0028-HIGH-PERFORMANCE-ROADMAP.md`.
+
+For the PR-0029 storage path, establish a reproducible measurement contract
 before changing queueing, buffering, compression, NUMA placement, or page
 size. Report cold/warm cache, worker count, queue capacity, p50/p95 latency,
 throughput, peak RSS, and the separate file/CRC/codec/GMP costs.

@@ -1103,6 +1103,7 @@ atomically publishes that index. If index construction or publication fails,
 the newly written chunk is removed and the previously published index remains
 unchanged.
 
+
 `load` is index-gated: an unindexed chunk is not loadable through the manager.
 The loaded chunk is decoded and checked against the index identity, stored
 size, and checksum before being returned. `remove` removes the indexed file
@@ -1908,3 +1909,84 @@ task counts. Writer and reader queue depth, active operations, completed
 operations, and failures are published through `ProgressTracker` and exposed
 by both progress reporters; storage byte and chunk telemetry remains
 unchanged.
+
+PR-0029 measurement criteria are fixed: Release configuration and host
+metadata are recorded; 100 MiB/512 MiB/1 GiB single- and multi-chunk workloads
+are tested in separate cold- and warm-cache populations; sync/async modes,
+worker counts 1/2/4/8, and queue capacities 1/4/16/64 are compared; and each
+warm case has one untimed warm-up plus at least five measured repetitions.
+Results must include stage timings, throughput, p50/p95, peak RSS, queue and
+failure telemetry, spill/reload counts, raw samples, and P/Q/T equality before
+an optimization is accepted.
+
+PR-0028 concurrent I/O now permits distinct chunk file reads and writes to
+overlap across async workers. StorageManager serializes only index publication
+and protects in-flight identities; the worker-wide manager mutex was removed.
+The 1,000,000-digit forced-1-MiB benchmark measured 0.549 s with one async
+worker and 0.423 s with four workers, with equal spill/reload counts and P-bit
+results. This is an initial result; the full workload matrix remains required.
+
+Async spill submission now transfers the newly encoded Chunk payload into the
+writer operation by move, while capturing stored-size metadata before the
+transfer. This removes one queue-entry GMP payload copy without releasing the
+resident BinaryNode before durable completion. Buffer reuse and reload-side
+payload movement remain measurement-gated follow-up work.
+
+The runtime compression contract now supports `none` and LZ4. LZ4 output is
+bounded by the existing chunk payload limit, decompression requires the exact
+declared uncompressed size, and canonical chunk identity remains
+compression-independent. Durable round-trip and CRC validation are covered;
+full none-vs-LZ4 performance claims remain benchmark-gated.
+
+The current platform audit found one NUMA node on an Intel Core Ultra 9 185H
+runner and no configured explicit HugeTLB pages (`HugePages_Total=0`). No NUMA
+or Huge Pages code is enabled from this evidence; affinity remains opt-in
+because hybrid-core placement can regress storage and GMP workloads. A
+multi-node or explicitly provisioned HugeTLB host must provide a measured
+benefit before platform-specific placement is accepted.
+
+The throughput benchmark now accepts a `none` or `lz4` compression argument.
+On the current runner for one 100 MiB target chunk, none encoded 99.66 MiB
+with 3.27 s total time, while LZ4 encoded 70.05 MiB with 2.74 s total time.
+The measured store/reload rates were 83.60/47.94 MiB/s for none and
+66.75/41.49 MiB/s for LZ4 when expressed over encoded bytes. These values are
+baseline evidence only; workload matrix and cold/warm cache measurements are
+still required before choosing a default.
+
+---
+
+## ADR-0040
+
+Date
+
+2026-07-24
+
+Status
+
+Accepted
+
+Title
+
+Separate PR-0028 Functional Storage Work from PR-0029 Measurement Work
+
+Decision
+
+PR-0028 owns the functional concurrent storage pipeline: concurrent
+StorageManager file operations, async writer/reader execution, spill data
+movement, and the bounded LZ4 backend. PR-0029 owns repeatable workload
+measurement, stage-level telemetry expansion, bottleneck optimization, and
+large-data/platform acceptance.
+
+Reason
+
+The functional path must first be verified against the PR-0027 correctness
+reference. Mixing implementation changes with cache-controlled repetitions,
+profiling, and platform-specific tuning would make correctness regressions and
+performance claims difficult to attribute.
+
+Consequence
+
+PR-0028 is functionally verified by the full 64-test suite, async multi-chunk
+round-trip benchmark, and 512 MiB none/LZ4 round trips. Its remaining work is
+change separation, final documentation, commit, and push. PR-0029 begins only
+after that boundary is committed and uses the PR-0028 result as its baseline.

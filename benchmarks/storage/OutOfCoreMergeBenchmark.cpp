@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <sys/resource.h>
+#include <unistd.h>
 
 namespace
 {
@@ -48,6 +49,18 @@ bool asynchronousIo(int argc, char* argv[])
     return argc >= 5 && std::string_view(argv[4]) == "async";
 }
 
+std::size_t ioWorkers(int argc, char* argv[], bool useAsync)
+{
+    if (!useAsync || argc < 6) return 1;
+    return std::max<std::size_t>(1, std::stoull(argv[5]));
+}
+
+std::size_t ioQueueCapacity(int argc, char* argv[], std::size_t workers)
+{
+    if (argc < 7) return std::max<std::size_t>(1, workers * 8);
+    return std::max<std::size_t>(1, std::stoull(argv[6]));
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -63,6 +76,9 @@ int main(int argc, char* argv[])
         const std::uint64_t budgetMiB = parseBudgetMiB(argc, argv);
         const bool useStorage = outOfCore(argc, argv);
         const bool useAsyncIo = useStorage && asynchronousIo(argc, argv);
+        const std::size_t workers = ioWorkers(argc, argv, useAsyncIo);
+        const std::size_t queueCapacity =
+            ioQueueCapacity(argc, argv, workers);
         if (digits == 0 || budgetMiB == 0)
         {
             throw std::invalid_argument("digits and budget must be positive");
@@ -73,7 +89,8 @@ int main(int argc, char* argv[])
             ComputationIdentity::fromPrecisionPlan(precision);
         StoragePolicy policy;
         policy.directory = std::filesystem::temp_directory_path()
-            / "givemepi-pr0026-merge-benchmark";
+            / ("givemepi-pr0026-merge-benchmark-"
+               + std::to_string(::getpid()));
         policy.memory_budget_bytes = budgetMiB * 1024ULL * 1024ULL;
         policy.target_chunk_size_bytes = std::min<std::uint64_t>(
             policy.memory_budget_bytes, 64ULL * 1024ULL * 1024ULL);
@@ -85,8 +102,8 @@ int main(int argc, char* argv[])
         std::optional<AsyncChunkReader> asyncReader;
         if (useAsyncIo)
         {
-            asyncWriter.emplace(manager, 8, 1);
-            asyncReader.emplace(manager, 8, 1);
+            asyncWriter.emplace(manager, queueCapacity, workers);
+            asyncReader.emplace(manager, queueCapacity, workers);
         }
         StorageMergeCoordinator coordinator(
             manager,
@@ -114,6 +131,8 @@ int main(int argc, char* argv[])
         std::cout << std::fixed << std::setprecision(3)
                   << "mode=" << (useStorage ? "out-of-core" : "in-memory")
                   << " io=" << (useAsyncIo ? "async" : "sync")
+                  << " io_workers=" << workers
+                  << " io_queue_capacity=" << queueCapacity
                   << " digits=" << digits
                   << " terms=" << precision.termCount
                   << " elapsed_seconds=" << elapsed

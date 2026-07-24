@@ -313,7 +313,6 @@ void AsyncChunkWriter::workerLoop()
                 }
             }
             {
-                std::lock_guard managerLock(managerMutex_);
                 std::lock_guard operationLock(operation->mutex);
                 static_cast<void>(manager_.store(*operation->chunk));
                 static_cast<void>(operation->lifecycle.completeStored());

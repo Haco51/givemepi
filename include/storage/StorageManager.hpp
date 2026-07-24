@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -60,6 +61,8 @@ private:
     ChunkStore store_;
     ChunkIndex index_;
     std::filesystem::path indexPath_;
+    mutable std::mutex indexMutex_;
+    std::set<ChunkId> inFlightStores_;
 };
 
 } // namespace pi::storage

@@ -296,16 +296,17 @@ void StorageMergeCoordinator::spillAfterMergeLevel(
                     throw std::logic_error("cannot begin merge node spill");
                 }
 
-                const Chunk chunk = BinaryNodeChunkAdapter::toChunk(
+                Chunk chunk = BinaryNodeChunkAdapter::toChunk(
                     nodes[index], computation_, level,
                     manager_.policy().compression);
                 if (asyncWriter_ != nullptr)
                 {
+                    const auto storedBytes = chunk.metadata.storedSize;
                     asyncWriter_->waitForCapacity();
                     pending.push_back(PendingWrite{
                         index,
-                        asyncWriter_->submit(chunk),
-                        chunk.metadata.storedSize});
+                        asyncWriter_->submit(std::move(chunk)),
+                        storedBytes});
                     publishProgress(level);
                 }
                 else

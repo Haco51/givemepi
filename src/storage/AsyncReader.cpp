@@ -194,7 +194,6 @@ void AsyncChunkReader::workerLoop()
         {
             std::optional<Chunk> loaded;
             {
-                std::lock_guard managerLock(managerMutex_);
                 loaded = manager_.load(operation->identity);
             }
             if (!loaded.has_value())

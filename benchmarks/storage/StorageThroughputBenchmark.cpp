@@ -24,6 +24,12 @@ std::uint64_t parseTargetMiB(int argc, char* argv[])
     return value;
 }
 
+pi::storage::CompressionAlgorithm parseCompression(int argc, char* argv[])
+{
+    if (argc < 3) return pi::storage::CompressionAlgorithm::none;
+    return pi::storage::parseCompressionAlgorithm(argv[2]);
+}
+
 double seconds(std::chrono::steady_clock::duration duration)
 {
     return std::chrono::duration<double>(duration).count();
@@ -40,6 +46,7 @@ int main(int argc, char* argv[])
     try
     {
         const std::uint64_t targetMiB = parseTargetMiB(argc, argv);
+        const auto compression = parseCompression(argc, argv);
         const std::uint64_t targetBytes = targetMiB * 1024ULL * 1024ULL;
         // Three values of 10^digits occupy approximately 1.25 * digits bytes
         // after GMP export. Add a margin so the measured payload is near target.
@@ -59,7 +66,8 @@ int main(int argc, char* argv[])
         pi::bigint::GMPInteger t(p);
         t.add(pi::bigint::GMPInteger(1));
         const Chunk chunk{
-            ChunkCodec::createMetadata(identity, p, q, t), p, q, t};
+            ChunkCodec::createMetadata(identity, p, q, t, compression),
+            p, q, t};
 
         const auto directory = std::filesystem::temp_directory_path()
             / ("givemepi-storage-throughput-" + std::to_string(::getpid()));
@@ -69,6 +77,7 @@ int main(int argc, char* argv[])
         policy.directory = directory;
         policy.memory_budget_bytes = std::max<std::uint64_t>(
             targetBytes * 2, defaultMemoryBudgetBytes);
+        policy.compression = compression;
 
         const auto started = std::chrono::steady_clock::now();
         StorageManager manager(policy);
@@ -94,6 +103,7 @@ int main(int argc, char* argv[])
         };
         std::cout << std::fixed << std::setprecision(2)
                   << "target_mib=" << targetMiB
+                  << " compression=" << toString(compression)
                   << " encoded_mib=" << mib(chunk.metadata.storedSize)
                   << " store_seconds=" << storeSeconds
                   << " store_mib_per_second="

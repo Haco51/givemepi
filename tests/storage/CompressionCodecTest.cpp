@@ -59,20 +59,17 @@ int main()
         return 1;
     }
 
-    rejected = false;
-    try
+    const auto& lz4 = CompressionCodecs::forAlgorithm(
+        CompressionAlgorithm::lz4);
+    const std::vector<std::uint8_t> repetitive(4096, 0x2a);
+    const auto lz4Compressed = lz4.compress(repetitive, 4096);
+    const auto lz4Decompressed = lz4.decompress(
+        lz4Compressed, repetitive.size(), repetitive.size());
+    if (lz4.algorithm() != CompressionAlgorithm::lz4
+        || lz4Decompressed != repetitive
+        || lz4Compressed.size() >= repetitive.size())
     {
-        static_cast<void>(CompressionCodecs::forAlgorithm(
-            CompressionAlgorithm::lz4
-        ));
-    }
-    catch (const std::invalid_argument&)
-    {
-        rejected = true;
-    }
-    if (!rejected)
-    {
-        std::cerr << "Unsupported compression codec was accepted\n";
+        std::cerr << "LZ4 compression round trip mismatch\n";
         return 1;
     }
 
