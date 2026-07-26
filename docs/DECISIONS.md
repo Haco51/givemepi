@@ -1990,3 +1990,417 @@ PR-0028 is functionally verified by the full 64-test suite, async multi-chunk
 round-trip benchmark, and 512 MiB none/LZ4 round trips. Its remaining work is
 change separation, final documentation, commit, and push. PR-0029 begins only
 after that boundary is committed and uses the PR-0028 result as its baseline.
+
+---
+
+## ADR-0041
+
+Date
+
+2026-07-24
+
+Status
+
+Accepted
+
+Title
+
+Fix the PR-0029 Measurement Environment and Acceptance Contract
+
+Decision
+
+PR-0029 comparisons use fixed Release/compiler/CPU/filesystem populations,
+separate cold and warm cache samples, one untimed warm-up for warm samples,
+and at least five measured repetitions per workload cell. Results must retain
+raw samples and report median, minimum, maximum, p95, throughput, peak RSS,
+queue telemetry, integrity status, and P/Q/T equality.
+
+The current `/tmp` tmpfs benchmark population is valid for a logical
+CPU/codec/storage-pipeline baseline but is not interchangeable with the
+workspace ext4 population. Device-I/O claims require an explicit ext4
+benchmark directory and a separately labeled result set.
+
+Reason
+
+The previous single-run results mixed cache and filesystem effects and did not
+provide enough variance data to approve an optimization. Separating the
+populations prevents a tmpfs result from being misreported as durable-device
+throughput.
+
+Consequence
+
+The next PR-0029 step is to add or select benchmark directory control and
+stage-level telemetry, then execute the fixed matrix. No optimization is
+accepted until it passes the correctness, durability, memory, measurement,
+and portability gates in the canonical PR-0029 sequence in
+`docs/IMPLEMENTATION_PLAN.md`.
+
+---
+
+## ADR-0042
+
+Date
+
+2026-07-25
+
+Status
+
+Accepted
+
+Title
+
+Keep PR-0029 Telemetry as Optional Aggregate Instrumentation
+
+Decision
+
+Storage stage timing is accumulated through an optional caller-owned
+`StorageTiming` object. Async reader and writer queue wait and active durations
+are exposed as aggregate counters. Timing fields are observations only and do
+not participate in chunk identity, codec bytes, lifecycle state, or progress
+correctness.
+
+Reason
+
+Telemetry must be available to benchmarks without imposing a timing object on
+normal production callers or changing storage semantics. Aggregate counters
+are safe for concurrent workers and sufficient for the first workload matrix.
+
+Consequence
+
+The next PR-0029 step is explicit storage-directory control and repeated
+cold/warm matrix execution. Per-request traces, buffer allocation tracing, and
+optimization remain deferred until aggregate telemetry identifies a target.
+
+---
+
+## ADR-0043
+
+Date
+
+2026-07-25
+
+Status
+
+Accepted
+
+Title
+
+Decode Once During Verified Reload
+
+Decision
+
+`ChunkStore::reloadAndVerify` reads and decodes a chunk once. The codec decode
+performs structural, size, checksum, compression, and GMP validation; the
+reload boundary additionally checks the deterministic filename identity and
+active compression policy. The standalone `verifyChunkIntegrity` operation
+remains available for audit scans.
+
+Reason
+
+The previous reload path verified the complete file and then loaded and
+decoded it again, doubling file-read, CRC, decompression, and GMP decode work
+for every reload without adding a distinct validation guarantee.
+
+Consequence
+
+Reload integrity semantics are preserved while normal reload CPU and I/O are
+reduced. The benchmark telemetry now represents one decode per reload; audit
+scans still use the explicit verification API.
+
+---
+
+## ADR-0044
+
+Date
+
+2026-07-25
+
+Status
+
+Accepted
+
+Title
+
+Defer Platform-Specific Storage Optimization
+
+Decision
+
+Do not add NUMA placement, explicit HugeTLB allocation, or THP tuning to the
+storage path for the current target host. CPU affinity may be used to create a
+reproducible benchmark population, but is not a production optimization until
+it demonstrates a sustained improvement. Prioritize filesystem durability
+and index commit batching instead.
+
+Reason
+
+The host exposes one NUMA node and no explicit HugeTLB pages. The measured
+ext4 workload is dominated by file/directory synchronization and serialized
+index publication, so memory locality and page-size changes cannot address
+the observed wall-clock bottleneck.
+
+Consequence
+
+Platform work remains a measurement gate rather than a code change. A future
+multi-socket/HugeTLB-capable host can reopen this decision with comparative
+benchmarks; the current PR-0029 implementation proceeds with filesystem and
+commit-path optimization.
+
+---
+
+## ADR-0045
+
+Date
+
+2026-07-25
+
+Status
+
+Accepted
+
+Title
+
+Bounded Chunk Encode Output
+
+Decision
+
+Chunk encoding allocates the final output buffer from the stored-size
+metadata and compresses directly into its payload tail. The uncompressed
+codec copies serialized P/Q/T directly into that tail; LZ4 writes directly
+into the bounded tail buffer. Temporary compressed vectors and the final
+payload append are removed from the store hot path.
+
+Reason
+
+The previous path materialized a canonical payload, a separate compressed
+vector, and then copied the compressed vector into the final chunk output.
+This increased peak memory and data movement without changing the durable
+format.
+
+Consequence
+
+Canonical bytes, CRC, metadata sizes, and compression behavior remain
+unchanged while one intermediate output allocation and one payload copy are
+removed. The optimization is accepted for correctness; sustained throughput
+improvement still requires repeated benchmark comparison.
+
+---
+
+## ADR-0046
+
+Date
+
+2026-07-25
+
+Status
+
+Accepted
+
+Title
+
+CRC, Read, and GMP Hot-Path Optimization
+
+Decision
+
+Use an SSE4.2 CRC32C implementation when available, retain the table-based
+portable fallback, read chunk files into a size-reserved byte vector using
+`file_size` and one binary read, and export non-negative GMP magnitudes
+directly without making an unnecessary absolute-value copy.
+
+Reason
+
+Large single-chunk telemetry showed CRC32C, file read, and GMP encode/decode
+as the actionable CPU path after bounded output encoding. These changes reduce
+loop overhead, vector growth/copying, and positive-value GMP limb copying
+without changing the canonical bytes or validation contract.
+
+Consequence
+
+Runtime CPU feature detection keeps unsupported x86 hosts and non-x86 builds
+on the portable CRC path. File-size/read failures remain explicit errors, and
+negative GMP values still use a temporary absolute value because their sign
+cannot be exported as a magnitude in place. Repeated before/after acceptance
+is still required before claiming a stable percentage improvement.
+
+---
+
+## ADR-0047
+
+Date
+
+2026-07-26
+
+Status
+
+Accepted
+
+Title
+
+Accept Combined Storage Hot-Path Effect
+
+Decision
+
+Accept the bounded output, CRC/read, and GMP changes as a combined end-to-end
+workload improvement. The preserved 12-cell Release before/after population
+shows store-plus-load p50 improvement in every cell, with correctness and
+canonical bytes preserved. Do not publish separate CRC, read, or GMP
+percentage attribution because the PR-0028 baseline predates stage telemetry.
+
+Reason
+
+The baseline and current executables provide comparable store/load timings and
+the same encoded bytes, but only the current executable reports the detailed
+stage counters. A combined result is supported; a per-stage causal claim is
+not.
+
+Consequence
+
+The two repeated before/after acceptance gates are closed at the end-to-end
+level. Peak RSS distribution, independent Reader/Writer repetition, and
+multi-chunk cold/warm acceptance remain separate PR-0029 gates.
+---
+
+## ADR-0048
+
+Date
+
+2026-07-26
+
+Status
+
+Accepted
+
+Title
+
+Accept Single-Chunk Peak RSS Distribution
+
+Decision
+
+Accept the single-chunk peak RSS gate for PR-0029. The preserved current
+Release population covers 12 cells and five repetitions per cell. All 60
+round-trips succeeded, and every cell's p95 is below the corresponding
+recorded PR-0028 release baseline range.
+
+Evidence
+
+The current per-cell p95 values are 491 MiB for 100 MiB/LZ4, 521 MiB for
+100 MiB/none, 2,452 MiB for 512 MiB/LZ4, 2,602 MiB for 512 MiB/none,
+4,852 MiB for 1 GiB/LZ4, and 5,152 MiB for 1 GiB/none. Filesystem does not
+change the acceptance result. The raw population is preserved at
+`/tmp/givemepi-pr0029-before-after-complete-after.tsv`.
+
+Consequence
+
+Peak RSS is no longer an open PR-0029 gate. Independent Reader/Writer
+repetition and multi-chunk concurrent I/O cold/warm acceptance remain open.
+
+---
+
+## ADR-0049
+
+Date
+
+2026-07-26
+
+Status
+
+Accepted
+
+Title
+
+Accept Independent Reader/Writer Matrix Execution
+
+Decision
+
+Accept the independent Reader/Writer matrix execution and correctness result.
+The matrix covers 64 cells and 320 repetitions across workers 1/2/4/8,
+queue capacities 1/4/16/64, tmpfs/ext4, and none/LZ4.
+
+Evidence
+
+All 320 runs completed with eight successful writer requests, eight successful
+reader requests, and 16 indexed chunks. The aggregate elapsed-time p50 was
+0.013 seconds and p95 was 0.215 seconds. Raw samples are preserved at
+`/tmp/givemepi-pr0029-reader-writer-matrix.tsv`.
+
+Limitation
+
+The current benchmark does not emit peak RSS, so this decision accepts matrix
+execution and correctness only. A separate memory measurement is required if
+the final PR-0029 matrix gate requires per-cell RSS.
+
+---
+
+## ADR-0050
+
+Date
+
+2026-07-26
+
+Status
+
+Accepted
+
+Title
+
+Accept Multi-Chunk Concurrent I/O Cold/Warm Matrix
+
+Decision
+
+Accept the multi-chunk concurrent I/O matrix for correctness, lifecycle,
+durability, cache-mode, and bounded-memory evidence.
+
+Evidence
+
+The matrix covers sync/async × workers 1/2/4/8 × queue capacities 1/4/16/64
+× tmpfs/ext4 × none/LZ4 × cold/warm, five repetitions per cell: 256 cells
+and 1,280 runs. All runs succeeded with 15 spills, 15 reloads, and the
+expected P-bit result. Aggregate elapsed p50/p95 was 0.368/2.124 seconds;
+peak RSS p95 was 27 MiB. No cold/warm correctness regression was observed.
+Raw samples are preserved at
+`/tmp/givemepi-pr0029-multichunk-concurrent-cold-warm-accepted.tsv`.
+
+Consequence
+
+The multi-chunk concurrent I/O and cold/warm gate is closed. PR-0029 now
+only requires final stabilization, regression/sanitizer reruns, and the
+final performance decision before commit.
+
+---
+
+## ADR-0051
+
+Date
+
+2026-07-26
+
+Status
+
+Accepted
+
+Title
+
+Freeze PR-0029 After Final Stabilization
+
+Decision
+
+Freeze PR-0029 as complete. All defined workload, correctness, memory,
+concurrency, cold/warm, regression, and sanitizer-smoke gates passed. No
+additional optimization is added to this PR.
+
+Evidence
+
+The Debug build passed all 64 CTest tests. Release benchmark targets rebuilt
+successfully. ASan/UBSan out-of-core smoke passed for sync and async
+1,000,000-digit workloads with leak detection disabled. The full raw
+populations and acceptance decisions are recorded in the canonical changelog
+and referenced benchmark files.
+
+Deferred scope
+
+NUMA, Huge Pages, and affinity remain deferred because the current host has
+one NUMA node and no HugeTLB pool. They require a separate PR and suitable
+hardware evidence.
+
+Consequence
+
+PR-0029 is ready for commit. Further work belongs to the next PR.

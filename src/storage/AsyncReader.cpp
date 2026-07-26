@@ -1,8 +1,10 @@
 #include "storage/AsyncReader.hpp"
 
 #include "storage/StorageManager.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -109,10 +111,15 @@ AsyncReadHandle AsyncChunkReader::loadAsync(const ChunkIdentity& identity)
 
 void AsyncChunkReader::waitForCapacity()
 {
+    const auto started = std::chrono::steady_clock::now();
     std::unique_lock lock(queueMutex_);
     queueChanged_.wait(lock, [this]() {
         return stopping_ || queue_.size() < capacity_;
     });
+    capacityWaitCount_.fetch_add(1, std::memory_order_relaxed);
+    StorageTiming::add(
+        capacityWaitNs_,
+        std::chrono::steady_clock::now() - started);
     if (stopping_) throw std::runtime_error("Async reader is stopped");
 }
 
@@ -135,6 +142,21 @@ std::uint64_t AsyncChunkReader::completedCount() const noexcept
 std::uint64_t AsyncChunkReader::failedCount() const noexcept
 {
     return failedCount_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AsyncChunkReader::capacityWaitNs() const noexcept
+{
+    return capacityWaitNs_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AsyncChunkReader::capacityWaitCount() const noexcept
+{
+    return capacityWaitCount_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AsyncChunkReader::activeNs() const noexcept
+{
+    return activeNs_.load(std::memory_order_relaxed);
 }
 
 void AsyncChunkReader::shutdown(bool drain)
@@ -185,6 +207,7 @@ void AsyncChunkReader::workerLoop()
         }
         queueChanged_.notify_all();
         activeCount_.fetch_add(1, std::memory_order_relaxed);
+        const auto activeStarted = std::chrono::steady_clock::now();
 
         {
             std::lock_guard lock(operation->mutex);
@@ -230,6 +253,9 @@ void AsyncChunkReader::workerLoop()
             }
         }
         activeCount_.fetch_sub(1, std::memory_order_relaxed);
+        StorageTiming::add(
+            activeNs_,
+            std::chrono::steady_clock::now() - activeStarted);
         operation->changed.notify_all();
     }
 }

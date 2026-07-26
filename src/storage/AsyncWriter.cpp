@@ -2,8 +2,10 @@
 
 #include "storage/ChunkCodec.hpp"
 #include "storage/StorageManager.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <stdexcept>
 #include <utility>
@@ -189,10 +191,15 @@ AsyncWriteHandle AsyncChunkWriter::submit(Chunk chunk)
 
 void AsyncChunkWriter::waitForCapacity()
 {
+    const auto started = std::chrono::steady_clock::now();
     std::unique_lock lock(queueMutex_);
     queueChanged_.wait(lock, [this]() {
         return stopping_ || queue_.size() < capacity_;
     });
+    capacityWaitCount_.fetch_add(1, std::memory_order_relaxed);
+    StorageTiming::add(
+        capacityWaitNs_,
+        std::chrono::steady_clock::now() - started);
     if (stopping_)
     {
         throw std::runtime_error("Async writer is stopped");
@@ -267,6 +274,21 @@ std::uint64_t AsyncChunkWriter::failedCount() const noexcept
     return failedCount_.load(std::memory_order_relaxed);
 }
 
+std::uint64_t AsyncChunkWriter::capacityWaitNs() const noexcept
+{
+    return capacityWaitNs_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AsyncChunkWriter::capacityWaitCount() const noexcept
+{
+    return capacityWaitCount_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t AsyncChunkWriter::activeNs() const noexcept
+{
+    return activeNs_.load(std::memory_order_relaxed);
+}
+
 std::size_t AsyncChunkWriter::capacity() const noexcept
 {
     return capacity_;
@@ -292,6 +314,7 @@ void AsyncChunkWriter::workerLoop()
         }
         queueChanged_.notify_all();
         activeCount_.fetch_add(1, std::memory_order_relaxed);
+        const auto activeStarted = std::chrono::steady_clock::now();
 
         {
             std::lock_guard lock(operation->mutex);
@@ -344,6 +367,9 @@ void AsyncChunkWriter::workerLoop()
             }
         }
         activeCount_.fetch_sub(1, std::memory_order_relaxed);
+        StorageTiming::add(
+            activeNs_,
+            std::chrono::steady_clock::now() - activeStarted);
         operation->changed.notify_all();
     }
 }

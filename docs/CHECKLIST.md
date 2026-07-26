@@ -310,31 +310,49 @@
 
 [x] Platform Applicability Audit (PR-0028)
 
-[ ] Compression Backend Optimization and Selection (PR-0029)
+[x] Compression Backend Optimization and Selection (PR-0029; LZ4 space/RSS acceptance, latency trade-off documented)
 
 [x] LZ4 Compression Backend and Durable Round-trip (PR-0028)
 
 [ ] NUMA, Huge Pages, and Affinity Optimization (PR-0029)
 
-[ ] Separate file-read, CRC32C, and GMP decode timings (PR-0029)
+[x] Separate file-read, CRC32C, and GMP decode timings (PR-0029)
 
-[ ] Cold-cache versus warm-cache reload benchmark
+[x] Cold-cache versus warm-cache reload benchmark
 
-[ ] Multi-chunk and concurrent I/O throughput benchmark
+[x] Multi-chunk and concurrent I/O throughput benchmark (256 cells × 5 repetitions, 1,280/1,280 successful; cold/warm accepted)
 
-[ ] None versus LZ4 size/throughput comparison
+[x] None versus LZ4 size/throughput comparison (5x12-cell acceptance; no latency-speedup claim)
 
-[ ] Peak RSS validation for 100 MiB, 512 MiB, and 1 GiB workloads
+[x] Single-chunk peak RSS instrumentation and release baseline for 100 MiB, 512 MiB, and 1 GiB workloads
 
-[ ] Large-data ASan/UBSan round-trip validation
+[x] Single-chunk peak RSS five-sample distribution and p95 acceptance (12 cells, 60/60 successful; p95 below the recorded PR-0028 release baseline)
+
+[x] Single-chunk five-sample p50/p95 matrix completion
+
+[x] Large-data ASan/UBSan round-trip validation (512 MiB and 1 GiB; LeakSanitizer environment-limited)
 
 [x] PR-0028 High-Performance Measurement Contract
 
-[ ] Independent Reader/Writer Concurrency Benchmark
+[x] Independent Reader/Writer Concurrency Benchmark (64 cells × 5 repetitions, 320/320 successful; RSS is not emitted by the current benchmark)
 
-[ ] I/O, CRC32C, Codec, and GMP Decode Timing Breakdown (PR-0029)
+[x] I/O, CRC32C, Codec, and GMP Decode Timing Breakdown (PR-0029)
 
-[ ] Buffer/Data-Movement Optimization Validation
+[x] PR-0029 Final Performance Decision and Stabilization (64/64 CTest; Release and sanitizer smoke)
+
+[x] Verified Reload Duplicate Read/Decode Elimination (PR-0029)
+
+[x] Bounded Buffer/Data-Movement Optimization Validation (round-trip and Release baseline)
+
+[x] Bounded Buffer/Data-Movement Repeated Speedup Acceptance (12-cell end-to-end before/after; individual stage attribution limited)
+
+[x] CRC32C SSE4.2/fallback, pre-sized read, and positive GMP export optimization validation
+
+[x] CRC/read/GMP Repeated Speedup Acceptance (combined end-to-end before/after; baseline stage telemetry unavailable)
+
+[x] PR-0029 Measurement Environment and Acceptance Contract
+
+[x] PR-0029 Workload Matrix Baseline (multi-chunk)
 
 -----------------
 

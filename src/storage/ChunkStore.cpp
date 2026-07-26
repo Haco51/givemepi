@@ -1,8 +1,10 @@
 #include "storage/ChunkStore.hpp"
 
 #include "checkpoint/AtomicFileCommit.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <fcntl.h>
 #include <fstream>
@@ -28,13 +30,43 @@ std::string formatBytes(std::uint64_t bytes)
 
 std::vector<std::uint8_t> readFile(const std::filesystem::path& path)
 {
+    if (const char* cacheMode = std::getenv("PI_STORAGE_CACHE_MODE");
+        cacheMode != nullptr && std::string_view(cacheMode) == "cold")
+    {
+        const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        if (descriptor >= 0)
+        {
+            static_cast<void>(::posix_fadvise(
+                descriptor, 0, 0, POSIX_FADV_DONTNEED));
+            ::close(descriptor);
+        }
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open chunk file: " + path.string());
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+
+    std::error_code error;
+    const auto fileSize = std::filesystem::file_size(path, error);
+    if (error)
+        throw std::system_error(error, "cannot stat chunk file");
+    if (fileSize > std::numeric_limits<std::size_t>::max()
+        || fileSize > static_cast<std::uintmax_t>(
+            std::numeric_limits<std::streamsize>::max()))
+        throw std::length_error("chunk file is too large to read");
+
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileSize));
+    if (bytes.empty()) return bytes;
+
+    in.read(
+        reinterpret_cast<char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    if (!in || in.gcount() != static_cast<std::streamsize>(bytes.size()))
+        throw std::runtime_error("cannot read complete chunk file: " + path.string());
+    return bytes;
 }
 }
 
-ChunkStore::ChunkStore(const StoragePolicy& policy) : policy_(policy)
+ChunkStore::ChunkStore(const StoragePolicy& policy, StorageTiming* timing)
+    : policy_(policy), timing_(timing)
 {
     policy_.validate();
     if (!std::filesystem::exists(policy_.directory)
@@ -113,20 +145,40 @@ ChunkId ChunkStore::store(const Chunk& chunk)
     if (chunk.metadata.compression != policy_.compression)
         throw std::invalid_argument("chunk compression does not match storage policy");
 
-    const auto encoded = ChunkCodec::encode(chunk);
+    const auto encoded = ChunkCodec::encode(chunk, timing_);
     const ChunkId id = chunk.metadata.identity.deterministicFilename();
     const auto target = chunkPath(id);
     const auto temp = createTemporaryFile(target);
     try
     {
+        const auto fileWriteStarted = std::chrono::steady_clock::now();
         std::ofstream out(temp, std::ios::binary);
         if (!out) throw std::runtime_error("cannot create temporary chunk");
         out.write(reinterpret_cast<const char*>(encoded.data()), static_cast<std::streamsize>(encoded.size()));
         out.close();
         if (!out) throw std::runtime_error("cannot write temporary chunk");
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeFileWriteNs,
+                std::chrono::steady_clock::now() - fileWriteStarted);
+        const auto fileSyncStarted = std::chrono::steady_clock::now();
         syncFile(temp);
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeFileSyncNs,
+                std::chrono::steady_clock::now() - fileSyncStarted);
+        const auto renameStarted = std::chrono::steady_clock::now();
         if (!atomicRename(temp, target)) throw std::runtime_error("cannot publish chunk atomically");
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeRenameNs,
+                std::chrono::steady_clock::now() - renameStarted);
+        const auto directorySyncStarted = std::chrono::steady_clock::now();
         syncDirectory();
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeDirectorySyncNs,
+                std::chrono::steady_clock::now() - directorySyncStarted);
     }
     catch (...)
     {
@@ -140,8 +192,13 @@ std::optional<Chunk> ChunkStore::load(ChunkId chunkId) const
 {
     const auto path = chunkPath(std::move(chunkId));
     if (!std::filesystem::is_regular_file(path)) return std::nullopt;
+    const auto readStarted = std::chrono::steady_clock::now();
     const auto bytes = readFile(path);
-    return ChunkCodec::decode(bytes);
+    if (timing_ != nullptr)
+        StorageTiming::add(
+            timing_->loadFileReadNs,
+            std::chrono::steady_clock::now() - readStarted);
+    return ChunkCodec::decode(bytes, timing_);
 }
 
 bool ChunkStore::contains(ChunkId chunkId) const
@@ -181,7 +238,13 @@ bool ChunkStore::verifyChunkIntegrity(ChunkId chunkId) const
     if (!std::filesystem::is_regular_file(path)) throw std::runtime_error("chunk not found");
     try
     {
-        const Chunk decoded = ChunkCodec::decode(readFile(path));
+        const auto readStarted = std::chrono::steady_clock::now();
+        const auto bytes = readFile(path);
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->loadFileReadNs,
+                std::chrono::steady_clock::now() - readStarted);
+        const Chunk decoded = ChunkCodec::decode(bytes, timing_);
         if (decoded.metadata.identity.deterministicFilename() != expectedId)
             throw std::runtime_error("chunk identity does not match filename");
         if (decoded.metadata.compression != policy_.compression)
@@ -196,9 +259,31 @@ bool ChunkStore::verifyChunkIntegrity(ChunkId chunkId) const
 
 std::optional<Chunk> ChunkStore::reloadAndVerify(ChunkId chunkId) const
 {
-    if (!contains(chunkId)) return std::nullopt;
-    verifyChunkIntegrity(chunkId);
-    return load(std::move(chunkId));
+    const auto expectedId = chunkId;
+    const auto path = chunkPath(std::move(chunkId));
+    if (!std::filesystem::is_regular_file(path)) return std::nullopt;
+
+    const auto readStarted = std::chrono::steady_clock::now();
+    const auto bytes = readFile(path);
+    if (timing_ != nullptr)
+        StorageTiming::add(
+            timing_->loadFileReadNs,
+            std::chrono::steady_clock::now() - readStarted);
+
+    try
+    {
+        auto decoded = ChunkCodec::decode(bytes, timing_);
+        if (decoded.metadata.identity.deterministicFilename() != expectedId)
+            throw std::runtime_error("chunk identity does not match filename");
+        if (decoded.metadata.compression != policy_.compression)
+            throw std::runtime_error("chunk compression does not match storage policy");
+        return decoded;
+    }
+    catch (const std::exception& error)
+    {
+        throw std::runtime_error(
+            std::string("chunk integrity check failed: ") + error.what());
+    }
 }
 
 std::vector<std::pair<ChunkId, bool>> ChunkStore::verifyAllChunks() const

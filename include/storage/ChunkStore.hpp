@@ -3,6 +3,7 @@
 #include "storage/ChunkTypes.hpp"
 #include "storage/ChunkCodec.hpp"
 #include "storage/StoragePolicy.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -33,9 +34,10 @@ public:
     /**
      * @brief ChunkStore 생성자
      * @param policy 저장소 정책
+     * @param timing 선택적 단계별 timing accumulator
      * @throws std::invalid_argument 정책이 유효하지 않은 경우
      */
-    explicit ChunkStore(const StoragePolicy& policy);
+    explicit ChunkStore(const StoragePolicy& policy, StorageTiming* timing = nullptr);
 
     /**
      * @brief ChunkStore 복사 생성자 (move-only class)
@@ -279,6 +281,7 @@ private:
      * @throws std::runtime_error 파싱 실패 시
      */
     StoragePolicy policy_;
+    StorageTiming* timing_ = nullptr;
 };
 
 } // namespace pi::storage

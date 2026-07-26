@@ -11,6 +11,8 @@
 namespace pi::storage
 {
 
+struct StorageTiming;
+
 struct Chunk
 {
     ChunkMetadata metadata;
@@ -35,11 +37,19 @@ public:
         CompressionAlgorithm compression = CompressionAlgorithm::none
     );
 
+    /// Encodes a chunk and optionally accumulates stage timings.
     [[nodiscard]]
-    static std::vector<std::uint8_t> encode(const Chunk& chunk);
+    static std::vector<std::uint8_t> encode(
+        const Chunk& chunk,
+        StorageTiming* timing = nullptr
+    );
 
+    /// Decodes a chunk and optionally accumulates stage timings.
     [[nodiscard]]
-    static Chunk decode(std::span<const std::uint8_t> bytes);
+    static Chunk decode(
+        std::span<const std::uint8_t> bytes,
+        StorageTiming* timing = nullptr
+    );
 };
 
 } // namespace pi::storage

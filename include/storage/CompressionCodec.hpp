@@ -25,6 +25,12 @@ public:
     ) const = 0;
 
     [[nodiscard]]
+    virtual std::size_t compressInto(
+        std::span<const std::uint8_t> input,
+        std::span<std::uint8_t> output
+    ) const = 0;
+
+    [[nodiscard]]
     virtual std::vector<std::uint8_t> decompress(
         std::span<const std::uint8_t> input,
         std::uint64_t expectedOutputSize,

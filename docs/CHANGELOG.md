@@ -4,6 +4,43 @@
 
 ### Added
 
+- Added CRC/read/GMP hot-path optimizations for PR-0029: runtime-selected
+  SSE4.2 CRC32C with a portable fallback, exact-size single-read chunk loading,
+  and copy-free positive GMP magnitude export. Canonical bytes, checksum
+  coverage, and corruption handling remain unchanged; combined end-to-end
+  speedup acceptance is complete.
+- Added an independent reader/writer concurrency benchmark that preloads a
+  reader population, concurrently submits new writer chunks and reloads reader
+  chunks, and reports throughput, queue waits, active I/O, completion counts,
+  and final index cardinality.
+- Completed the none-vs-LZ4 compression acceptance matrix: 60/60 Release
+  round-trips passed across 100/512/1024 MiB on tmpfs and ext4. LZ4 reduced
+  encoded size by 29.7% and peak RSS by about 5.6~5.8% in every cell; its
+  latency is recorded as a workload-dependent trade-off rather than a claimed
+  universal speedup.
+- Recorded the consolidated PR-0029 change history covering storage telemetry,
+  reload, bounded-buffer, compression, CRC/read/GMP, concurrency benchmark,
+  stability validation, and remaining acceptance items in the canonical
+  changelog, checklist, decision log, and implementation plan.
+- Fixed the PR-0029 documentation layout by keeping implementation order and
+  remaining acceptance work in `docs/IMPLEMENTATION_PLAN.md`, with completion
+  history, decisions, and task state kept in the canonical changelog,
+  decisions, and checklist documents.
+- Preserved a complete PR-0028-baseline versus current PR-0029 Release raw
+  population for 12 cells (100/512/1024 MiB × tmpfs/ext4 × none/LZ4), five
+  repetitions per cell, at `/tmp/givemepi-pr0029-before-after-complete-before.tsv`
+  and `/tmp/givemepi-pr0029-before-after-complete-after.tsv`. Comparable
+  store-plus-load p50 improved by 56.0~66.1% across the cells and encoded
+  bytes were unchanged. The baseline executable predates stage telemetry, so
+  individual CRC/read/GMP attribution and baseline RSS comparison remain
+  separate from this end-to-end effect measurement.
+- Accepted the combined bounded-buffer plus CRC/read/GMP end-to-end effect:
+  store-plus-load p50 improved in all 12 cells by 54.5~66.1%, and p95 improved
+  in all cells by 50.9~70.5%, with 60/60 before and 60/60 after round-trips
+  successful. This is a combined effect because the PR-0028 baseline has no
+  stage telemetry; individual CRC/read/GMP percentage attribution is not
+  claimed.
+
 - Added a version-1 runtime chunk codec with explicit big-endian metadata,
   canonical P/Q/T signed-magnitude payloads, CRC32C coverage, checked lengths,
   deterministic round trips, and corruption/version rejection.
@@ -683,3 +720,85 @@
   affinity or system-wide THP override.
 - Separated PR-0028 functional implementation from PR-0029 repeatable
   workload measurement, bottleneck optimization, and large-data acceptance.
+- Fixed the PR-0029 measurement contract: Release/compiler populations,
+  CPU/filesystem metadata, cold/warm cache separation, five repetitions,
+  p50/p95 summaries, raw samples, queue telemetry, integrity, and P/Q/T
+  equality are required before accepting an optimization. `/tmp` tmpfs and
+  ext4 results are explicitly kept as separate populations.
+- Added PR-0029 stage telemetry for GMP encode/decode, compression,
+  file read/write, file sync, rename, directory sync, CRC32C, index
+  publication, async queue-capacity wait, and async worker active time.
+- Executed the PR-0029 sync/async multi-chunk workload matrix on separate
+  tmpfs and ext4 populations. All 34 combinations preserved spill/reload
+  counts and the P-bit result; ext4 durability sync is the dominant observed
+  bottleneck. Single-chunk repetition and 1 GiB acceptance remain incomplete,
+  and one non-reproducible 512 MiB ext4/LZ4 mismatch is tracked for follow-up.
+- Removed duplicate read/decode work from verified reload while preserving
+  checksum, structural, identity, compression, and GMP validation. Added
+  separate aggregate telemetry for index mutex wait and index commit time.
+  The 1,000,000-digit async benchmark retained 15 spills/reloads and the same
+  P-bit result; reload telemetry dropped from roughly 19/21/15 ms to
+  9/10/6 ms for file-read/CRC/GMP-decode in the repeated sample population.
+- Completed 1 GiB release round-trip checks for none/LZ4 on both tmpfs and
+  ext4. Chunk identity, index integrity, and payload equality passed in all
+  four cases. ASan/UBSan passed the 100 MiB storage case and storage-manager
+  regression tests; larger sanitizer runs were environment-limited and are
+  not marked as accepted.
+- Audited platform applicability: the current host has one NUMA node, no
+  explicit HugeTLB pool, THP already enabled, and powersave CPU governors.
+  NUMA/HugeTLB/THP code changes are deferred; affinity is reserved for
+  benchmark reproducibility, while ext4 durability and index commit remain
+  the actionable optimization targets.
+- Completed the single-chunk matrix at five repetitions per cell: 12 cells,
+  60/60 successful round-trips, with min/p50/p95 summaries for 100 MiB,
+  512 MiB, and 1 GiB none/LZ4 on tmpfs and ext4. The earlier 512 MiB
+  ext4/LZ4 mismatch did not recur.
+- Added explicit cold/warm reload measurement mode and completed 60 cold plus
+  60 warm samples across the same 12 cells. Warmup payloads and timings are
+  excluded from measured reload telemetry; all 120 executions preserved
+  chunk integrity and payload equality. Cache warmup did not consistently
+  reduce wall-clock reload time because CRC/GMP decode remains significant.
+- Added `peak_rss_mib` to the single-chunk throughput benchmark using
+  `getrusage(RUSAGE_SELF)`. A 12-cell 100/512/1024 MiB none/LZ4 tmpfs/ext4
+  baseline completed 12/12 successfully, with observed peaks of 591~620,
+  2962~3112, and 5523~5945 MiB respectively. Five-sample RSS distribution
+  acceptance remains separate from the instrumentation baseline.
+- Rechecked the earlier 512 MiB ext4/LZ4 mismatch with 20 additional
+  independent-directory Release runs. All 20 round-trips passed with no
+  checksum, identity, or payload mismatch; the anomaly is currently
+  non-reproducible and remains documented as an environment observation.
+- Completed 512 MiB and 1 GiB none/LZ4 large-data round-trips under combined
+  ASan/UBSan with leak detection disabled due the runner's ptrace limitation.
+  All four cases passed without sanitizer diagnostics; peak RSS ranged from
+  3506 MiB to 6948 MiB.
+- Reduced ChunkCodec store-path data movement by writing none/LZ4 payloads
+  directly into a bounded final output buffer. Release smoke round-trips for
+  100 MiB, 512 MiB, and 1 GiB none/LZ4 all passed with canonical bytes and
+  CRC integrity preserved. Repeated before/after speedup acceptance remains
+  separate from this correctness and allocation reduction change.
+- Completed single-chunk peak RSS five-sample acceptance for the full 12-cell
+  workload: 100/512/1024 MiB × tmpfs/ext4 × none/LZ4, 60/60 successful
+  round-trips with no checksum, identity, or payload mismatch. Per-cell p95
+  RSS was 491~5,152 MiB (100 MiB/LZ4 through 1 GiB/none), below the recorded
+  PR-0028 release baseline ranges of 591~620, 2,962~3,112, and 5,523~5,945
+  MiB. Raw samples remain in `/tmp/givemepi-pr0029-before-after-complete-after.tsv`.
+- Completed the independent Reader/Writer workload matrix: workers 1/2/4/8 ×
+  queue capacities 1/4/16/64 × tmpfs/ext4 × none/LZ4, five repetitions per
+  cell (64 cells, 320 runs). Every run completed with 8 writer successes,
+  8 reader successes, and 16 indexed chunks. Elapsed-time p50 across all
+  samples was 0.013 s and p95 was 0.215 s; raw samples are preserved in
+  `/tmp/givemepi-pr0029-reader-writer-matrix.tsv`. The benchmark currently
+  does not report peak RSS, so this is execution/correctness evidence, not a
+  separate memory acceptance.
+- Completed multi-chunk concurrent I/O cold/warm acceptance using sync and
+  async modes, workers 1/2/4/8, queues 1/4/16/64, tmpfs/ext4, none/LZ4, and
+  five repetitions: 256 cells and 1,280/1,280 successful runs. Every sample
+  preserved 15 spills, 15 reloads, and the expected P-bit result; aggregate
+  elapsed p50/p95 was 0.368/2.124 seconds and peak RSS p95 was 27 MiB.
+  Cold and warm populations showed no correctness regression. Raw samples are
+  preserved at `/tmp/givemepi-pr0029-multichunk-concurrent-cold-warm-accepted.tsv`.
+- Finalized PR-0029: Debug rebuilt with all 64 CTest tests passing, Release
+  benchmark targets rebuilt, and ASan/UBSan out-of-core smoke passed for sync
+  and async 1,000,000-digit workloads with leak detection disabled. NUMA,
+  Huge Pages, and affinity remain deferred on this one-NUMA/no-HugeTLB host;
+  no further PR-0029 scope is open.

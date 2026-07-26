@@ -114,6 +114,12 @@ public:
     [[nodiscard]] std::size_t activeCount() const noexcept;
     [[nodiscard]] std::uint64_t completedCount() const noexcept;
     [[nodiscard]] std::uint64_t failedCount() const noexcept;
+    /// Aggregate time spent waiting for queue capacity.
+    [[nodiscard]] std::uint64_t capacityWaitNs() const noexcept;
+    /// Number of capacity wait observations.
+    [[nodiscard]] std::uint64_t capacityWaitCount() const noexcept;
+    /// Aggregate time spent processing accepted write operations.
+    [[nodiscard]] std::uint64_t activeNs() const noexcept;
     [[nodiscard]] std::size_t capacity() const noexcept;
 
 private:
@@ -128,6 +134,9 @@ private:
     std::atomic<std::size_t> activeCount_{0};
     std::atomic<std::uint64_t> completedCount_{0};
     std::atomic<std::uint64_t> failedCount_{0};
+    std::atomic<std::uint64_t> capacityWaitNs_{0};
+    std::atomic<std::uint64_t> capacityWaitCount_{0};
+    std::atomic<std::uint64_t> activeNs_{0};
     std::uint64_t nextRequestId_ = 1;
     bool stopping_ = false;
 };

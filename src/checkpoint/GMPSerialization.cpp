@@ -20,36 +20,33 @@ SerializedGMPInteger GMPSerialization::encode(
         return SerializedGMPInteger{IntegerSign::zero, {}};
     }
 
-    bigint::GMPInteger absolute(value);
-
-    if (rawSign < 0)
+    const auto exportMagnitude = [](const mpz_t* source)
     {
+        const std::size_t bitCount = mpz_sizeinbase(*source, 2);
+
+        if (bitCount > std::numeric_limits<std::size_t>::max() - 7)
+            throw std::overflow_error("Canonical GMP magnitude size overflow");
+
+        std::vector<std::uint8_t> magnitude((bitCount + 7) / 8);
+        std::size_t written = 0;
+        mpz_export(magnitude.data(), &written, 1, 1, 1, 0, *source);
+        magnitude.resize(written);
+        return magnitude;
+    };
+
+    std::vector<std::uint8_t> magnitude;
+    if (rawSign > 0)
+    {
+        // mpz_export already emits the absolute magnitude for a non-negative
+        // value, so avoid copying the GMP limb array on the hot path.
+        magnitude = exportMagnitude(value.raw());
+    }
+    else
+    {
+        bigint::GMPInteger absolute(value);
         absolute.negate();
+        magnitude = exportMagnitude(absolute.raw());
     }
-
-    const std::size_t bitCount = mpz_sizeinbase(*absolute.raw(), 2);
-
-    if (bitCount > std::numeric_limits<std::size_t>::max() - 7)
-    {
-        throw std::overflow_error(
-            "Canonical GMP magnitude size overflow"
-        );
-    }
-
-    std::vector<std::uint8_t> magnitude((bitCount + 7) / 8);
-    std::size_t written = 0;
-
-    mpz_export(
-        magnitude.data(),
-        &written,
-        1,
-        1,
-        1,
-        0,
-        *absolute.raw()
-    );
-
-    magnitude.resize(written);
 
     return SerializedGMPInteger{
         rawSign > 0 ? IntegerSign::positive : IntegerSign::negative,

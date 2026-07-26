@@ -107,6 +107,28 @@ if(ENABLE_BENCHMARKS)
     target_include_directories(out-of-core-merge-benchmark PRIVATE include)
     target_link_libraries(out-of-core-merge-benchmark PRIVATE gmp Threads::Threads)
 
+    add_executable(reader-writer-concurrency-benchmark
+        benchmarks/storage/ReaderWriterConcurrencyBenchmark.cpp
+        src/storage/AsyncWriter.cpp
+        src/storage/AsyncReader.cpp
+        src/storage/StorageManager.cpp
+        src/storage/ChunkStore.cpp
+        src/storage/ChunkIndex.cpp
+        src/storage/ChunkCodec.cpp
+        src/storage/CompressionCodec.cpp
+        src/storage/StoragePolicy.cpp
+        src/storage/ChunkTypes.cpp
+        src/checkpoint/AtomicFileCommit.cpp
+        src/checkpoint/CRC32C.cpp
+        src/checkpoint/GMPSerialization.cpp
+        src/checkpoint/CheckpointTypes.cpp
+        src/chudnovsky/PrecisionPolicy.cpp
+        src/bigint/GMPInteger.cpp
+    )
+
+    target_include_directories(reader-writer-concurrency-benchmark PRIVATE include)
+    target_link_libraries(reader-writer-concurrency-benchmark PRIVATE gmp Threads::Threads)
+
     add_executable(storage-throughput-benchmark
         benchmarks/storage/StorageThroughputBenchmark.cpp
         src/storage/StorageManager.cpp

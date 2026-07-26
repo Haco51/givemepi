@@ -3,9 +3,11 @@
 #include "checkpoint/CRC32C.hpp"
 #include "checkpoint/GMPSerialization.hpp"
 #include "storage/CompressionCodec.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -267,22 +269,25 @@ ChunkMetadata ChunkCodec::createMetadata(
 }
 
 
-std::vector<std::uint8_t> ChunkCodec::encode(const Chunk& chunk)
+std::vector<std::uint8_t> ChunkCodec::encode(
+    const Chunk& chunk,
+    StorageTiming* timing
+)
 {
     chunk.metadata.validate();
+    const auto encodeStarted = std::chrono::steady_clock::now();
     const auto serializedP = checkpoint::GMPSerialization::encode(chunk.p);
     const auto serializedQ = checkpoint::GMPSerialization::encode(chunk.q);
     const auto serializedT = checkpoint::GMPSerialization::encode(chunk.t);
-    const auto payload = canonicalPayload(serializedP, serializedQ, serializedT);
-    const auto& codec = CompressionCodecs::forAlgorithm(
-        chunk.metadata.compression
-    );
-    const auto stored = codec.compress(payload, maxChunkPayloadBytes);
-
-    if (chunk.metadata.uncompressedSize != payload.size()
-        || chunk.metadata.storedSize != stored.size())
+    if (timing != nullptr)
+        StorageTiming::add(
+            timing->storeGmpEncodeNs,
+            std::chrono::steady_clock::now() - encodeStarted);
+    const std::size_t payloadSize = serializedP.magnitude.size()
+        + serializedQ.magnitude.size() + serializedT.magnitude.size();
+    if (chunk.metadata.uncompressedSize != payloadSize)
     {
-        throw std::invalid_argument("Chunk size metadata does not match payload");
+        throw std::invalid_argument("Chunk uncompressed size metadata does not match payload");
     }
 
     std::vector<std::uint8_t> output = makeHeader(
@@ -291,7 +296,34 @@ std::vector<std::uint8_t> ChunkCodec::encode(const Chunk& chunk)
         serializedQ,
         serializedT
     );
-    output.insert(output.end(), stored.begin(), stored.end());
+    output.resize(output.size() + static_cast<std::size_t>(chunk.metadata.storedSize));
+    const auto payloadOutput = std::span<std::uint8_t>(output).subspan(
+        checksumOffset + checksumSize);
+    const auto compressionStarted = std::chrono::steady_clock::now();
+    std::size_t written = 0;
+    if (chunk.metadata.compression == CompressionAlgorithm::none)
+    {
+        std::copy(serializedP.magnitude.begin(), serializedP.magnitude.end(), payloadOutput.begin());
+        std::copy(serializedQ.magnitude.begin(), serializedQ.magnitude.end(),
+            payloadOutput.begin() + serializedP.magnitude.size());
+        std::copy(serializedT.magnitude.begin(), serializedT.magnitude.end(),
+            payloadOutput.begin() + serializedP.magnitude.size() + serializedQ.magnitude.size());
+        written = payloadSize;
+    }
+    else
+    {
+        const auto payload = canonicalPayload(serializedP, serializedQ, serializedT);
+        const auto& codec = CompressionCodecs::forAlgorithm(
+            chunk.metadata.compression
+        );
+        written = codec.compressInto(payload, payloadOutput);
+    }
+    if (timing != nullptr)
+        StorageTiming::add(
+            timing->storeCompressionNs,
+            std::chrono::steady_clock::now() - compressionStarted);
+    if (written != chunk.metadata.storedSize)
+        throw std::invalid_argument("Chunk stored size metadata does not match payload");
     const std::uint32_t checksum = calculateChecksum(output);
     if (chunk.metadata.checksumValue != checksum)
     {
@@ -302,7 +334,10 @@ std::vector<std::uint8_t> ChunkCodec::encode(const Chunk& chunk)
 }
 
 
-Chunk ChunkCodec::decode(std::span<const std::uint8_t> bytes)
+Chunk ChunkCodec::decode(
+    std::span<const std::uint8_t> bytes,
+    StorageTiming* timing
+)
 {
     Reader reader(bytes);
     const auto magic = reader.take(chunkMagic.size());
@@ -387,19 +422,29 @@ Chunk ChunkCodec::decode(std::span<const std::uint8_t> bytes)
         compression
     );
 
-    if (storedSize != reader.remaining()
-        || checksumValue != calculateChecksum(bytes))
+    const auto crcStarted = std::chrono::steady_clock::now();
+    const auto calculatedChecksum = calculateChecksum(bytes);
+    if (timing != nullptr)
+        StorageTiming::add(
+            timing->loadCrcNs,
+            std::chrono::steady_clock::now() - crcStarted);
+    if (storedSize != reader.remaining() || checksumValue != calculatedChecksum)
     {
         throw std::invalid_argument("Runtime chunk checksum or size mismatch");
     }
 
     const auto stored = reader.take(reader.remaining());
     const auto& codec = CompressionCodecs::forAlgorithm(compression);
+    const auto decompressionStarted = std::chrono::steady_clock::now();
     const auto payload = codec.decompress(
         stored,
         uncompressedSize,
         maxChunkPayloadBytes
     );
+    if (timing != nullptr)
+        StorageTiming::add(
+            timing->loadDecompressionNs,
+            std::chrono::steady_clock::now() - decompressionStarted);
     const std::size_t payloadLength = checkedAdd(
         checkedAdd(pLength, qLength),
         tLength
@@ -419,12 +464,18 @@ Chunk ChunkCodec::decode(std::span<const std::uint8_t> bytes)
         tLength
     );
 
-    return Chunk{
+    const auto decodeStarted = std::chrono::steady_clock::now();
+    Chunk result{
         metadata,
         checkpoint::GMPSerialization::decode(pSign, pBytes),
         checkpoint::GMPSerialization::decode(qSign, qBytes),
         checkpoint::GMPSerialization::decode(tSign, tBytes)
     };
+    if (timing != nullptr)
+        StorageTiming::add(
+            timing->loadGmpDecodeNs,
+            std::chrono::steady_clock::now() - decodeStarted);
+    return result;
 }
 
 } // namespace pi::storage

@@ -30,7 +30,8 @@ int main()
     StoragePolicy policy;
     policy.directory = directory;
     policy.validate();
-    ChunkStore store(policy);
+    StorageTiming timing;
+    ChunkStore store(policy, &timing);
     const auto id = store.store(chunk);
 
     const auto loaded = store.load(id);
@@ -41,6 +42,15 @@ int main()
         || !store.reloadAndVerify(id).has_value())
     {
         std::cerr << "ChunkStore round trip failed\n";
+        return 1;
+    }
+    if (timing.storeGmpEncodeNs.load() == 0
+        || timing.storeFileWriteNs.load() == 0
+        || timing.loadFileReadNs.load() == 0
+        || timing.loadCrcNs.load() == 0
+        || timing.loadGmpDecodeNs.load() == 0)
+    {
+        std::cerr << "ChunkStore timing telemetry missing\n";
         return 1;
     }
 

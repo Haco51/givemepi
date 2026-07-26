@@ -26,7 +26,8 @@ struct StorageSnapshot
 class StorageManager
 {
 public:
-    explicit StorageManager(const StoragePolicy& policy);
+    /// Creates a storage manager with an optional stage timing accumulator.
+    explicit StorageManager(const StoragePolicy& policy, StorageTiming* timing = nullptr);
 
     StorageManager(const StorageManager&) = delete;
     StorageManager& operator=(const StorageManager&) = delete;
@@ -63,6 +64,7 @@ private:
     std::filesystem::path indexPath_;
     mutable std::mutex indexMutex_;
     std::set<ChunkId> inFlightStores_;
+    StorageTiming* timing_ = nullptr;
 };
 
 } // namespace pi::storage

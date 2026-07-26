@@ -2,9 +2,11 @@
 #include "chudnovsky/PrecisionPolicy.hpp"
 #include "scheduler/Scheduler.hpp"
 #include "storage/StorageMergeCoordinator.hpp"
+#include "storage/StorageTiming.hpp"
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -25,6 +27,11 @@ std::uint64_t peakRssMiB()
         return 0;
     }
     return static_cast<std::uint64_t>(usage.ru_maxrss) / 1024;
+}
+
+double milliseconds(std::uint64_t nanoseconds)
+{
+    return static_cast<double>(nanoseconds) / 1'000'000.0;
 }
 
 std::uint64_t parseDigits(int argc, char* argv[])
@@ -61,6 +68,29 @@ std::size_t ioQueueCapacity(int argc, char* argv[], std::size_t workers)
     return std::max<std::size_t>(1, std::stoull(argv[6]));
 }
 
+std::filesystem::path storageDirectory(int argc, char* argv[])
+{
+    if (argc >= 8) return argv[7];
+    return std::filesystem::temp_directory_path()
+        / ("givemepi-pr0026-merge-benchmark-"
+           + std::to_string(::getpid()));
+}
+
+pi::storage::CompressionAlgorithm compressionAlgorithm(int argc, char* argv[])
+{
+    if (argc < 9) return pi::storage::CompressionAlgorithm::none;
+    return pi::storage::parseCompressionAlgorithm(argv[8]);
+}
+
+std::string_view cacheMode(int argc, char* argv[])
+{
+    if (argc < 10) return "warm";
+    const auto mode = std::string_view(argv[9]);
+    if (mode != "cold" && mode != "warm")
+        throw std::invalid_argument("cache mode must be cold or warm");
+    return mode;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -79,6 +109,8 @@ int main(int argc, char* argv[])
         const std::size_t workers = ioWorkers(argc, argv, useAsyncIo);
         const std::size_t queueCapacity =
             ioQueueCapacity(argc, argv, workers);
+        const auto compression = compressionAlgorithm(argc, argv);
+        const auto cache = cacheMode(argc, argv);
         if (digits == 0 || budgetMiB == 0)
         {
             throw std::invalid_argument("digits and budget must be positive");
@@ -88,16 +120,19 @@ int main(int argc, char* argv[])
         const auto computation =
             ComputationIdentity::fromPrecisionPlan(precision);
         StoragePolicy policy;
-        policy.directory = std::filesystem::temp_directory_path()
-            / ("givemepi-pr0026-merge-benchmark-"
-               + std::to_string(::getpid()));
+        policy.directory = storageDirectory(argc, argv);
         policy.memory_budget_bytes = budgetMiB * 1024ULL * 1024ULL;
         policy.target_chunk_size_bytes = std::min<std::uint64_t>(
             policy.memory_budget_bytes, 64ULL * 1024ULL * 1024ULL);
+        policy.compression = compression;
+        if (::setenv("PI_STORAGE_CACHE_MODE", std::string(cache).c_str(), 1)
+            != 0)
+            throw std::runtime_error("cannot set storage cache mode");
 
         std::error_code ec;
         std::filesystem::remove_all(policy.directory, ec);
-        StorageManager manager(policy);
+        StorageTiming timing;
+        StorageManager manager(policy, &timing);
         std::optional<AsyncChunkWriter> asyncWriter;
         std::optional<AsyncChunkReader> asyncReader;
         if (useAsyncIo)
@@ -133,10 +168,62 @@ int main(int argc, char* argv[])
                   << " io=" << (useAsyncIo ? "async" : "sync")
                   << " io_workers=" << workers
                   << " io_queue_capacity=" << queueCapacity
+                  << " compression=" << toString(compression)
+                  << " cache_mode=" << cache
                   << " digits=" << digits
                   << " terms=" << precision.termCount
                   << " elapsed_seconds=" << elapsed
                   << " peak_rss_mib=" << peakRssMiB()
+                  << " store_gmp_encode_ms="
+                  << milliseconds(timing.storeGmpEncodeNs.load())
+                  << " store_compression_ms="
+                  << milliseconds(timing.storeCompressionNs.load())
+                  << " store_file_write_ms="
+                  << milliseconds(timing.storeFileWriteNs.load())
+                  << " store_file_sync_ms="
+                  << milliseconds(timing.storeFileSyncNs.load())
+                  << " store_rename_ms="
+                  << milliseconds(timing.storeRenameNs.load())
+                  << " store_directory_sync_ms="
+                  << milliseconds(timing.storeDirectorySyncNs.load())
+                  << " store_index_publish_ms="
+                  << milliseconds(timing.storeIndexPublishNs.load())
+                  << " store_index_mutex_wait_ms="
+                  << milliseconds(timing.storeIndexMutexWaitNs.load())
+                  << " store_index_commit_ms="
+                  << milliseconds(timing.storeIndexCommitNs.load())
+                  << " load_file_read_ms="
+                  << milliseconds(timing.loadFileReadNs.load())
+                  << " load_crc_ms="
+                  << milliseconds(timing.loadCrcNs.load())
+                  << " load_decompression_ms="
+                  << milliseconds(timing.loadDecompressionNs.load())
+                  << " load_gmp_decode_ms="
+                  << milliseconds(timing.loadGmpDecodeNs.load())
+                  << " writer_wait_ms="
+                  << (asyncWriter.has_value()
+                          ? milliseconds(asyncWriter->capacityWaitNs())
+                          : 0.0)
+                  << " writer_wait_count="
+                  << (asyncWriter.has_value()
+                          ? asyncWriter->capacityWaitCount()
+                          : 0)
+                  << " writer_active_ms="
+                  << (asyncWriter.has_value()
+                          ? milliseconds(asyncWriter->activeNs())
+                          : 0.0)
+                  << " reader_wait_ms="
+                  << (asyncReader.has_value()
+                          ? milliseconds(asyncReader->capacityWaitNs())
+                          : 0.0)
+                  << " reader_wait_count="
+                  << (asyncReader.has_value()
+                          ? asyncReader->capacityWaitCount()
+                          : 0)
+                  << " reader_active_ms="
+                  << (asyncReader.has_value()
+                          ? milliseconds(asyncReader->activeNs())
+                          : 0.0)
                   << " spill_count=" << coordinator.spillCount()
                   << " reload_count=" << coordinator.reloadCount()
                   << " spilled_bytes=" << coordinator.spilledBytes()

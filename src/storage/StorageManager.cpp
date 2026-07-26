@@ -1,5 +1,7 @@
 #include "storage/StorageManager.hpp"
+#include "storage/StorageTiming.hpp"
 
+#include <chrono>
 #include <stdexcept>
 
 namespace pi::storage
@@ -10,11 +12,12 @@ std::filesystem::path StorageManager::makeIndexPath(const StoragePolicy& policy)
     return policy.directory / "chunk-index-v1.bin";
 }
 
-StorageManager::StorageManager(const StoragePolicy& policy)
+StorageManager::StorageManager(const StoragePolicy& policy, StorageTiming* timing)
     : policy_(policy)
-    , store_(policy_)
+    , store_(policy_, timing)
     , index_(ChunkIndex::create())
     , indexPath_(makeIndexPath(policy_))
+    , timing_(timing)
 {
     if (std::filesystem::exists(indexPath_))
         index_ = ChunkIndex::load(indexPath_);
@@ -40,11 +43,25 @@ ChunkId StorageManager::store(const Chunk& chunk)
     try
     {
         static_cast<void>(store_.store(chunk));
+        const auto indexPublishStarted = std::chrono::steady_clock::now();
         std::lock_guard lock(indexMutex_);
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeIndexMutexWaitNs,
+                std::chrono::steady_clock::now() - indexPublishStarted);
+        const auto indexCommitStarted = std::chrono::steady_clock::now();
         ChunkIndex next = index_;
         next.add(chunk.metadata);
         publishIndex(next);
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeIndexCommitNs,
+                std::chrono::steady_clock::now() - indexCommitStarted);
         inFlightStores_.erase(id);
+        if (timing_ != nullptr)
+            StorageTiming::add(
+                timing_->storeIndexPublishNs,
+                std::chrono::steady_clock::now() - indexPublishStarted);
     }
     catch (...)
     {

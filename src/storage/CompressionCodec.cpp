@@ -46,6 +46,18 @@ public:
     }
 
     [[nodiscard]]
+    std::size_t compressInto(
+        std::span<const std::uint8_t> input,
+        std::span<std::uint8_t> output
+    ) const override
+    {
+        if (output.size() < input.size())
+            throw std::length_error("Uncompressed output buffer is too small");
+        std::copy(input.begin(), input.end(), output.begin());
+        return input.size();
+    }
+
+    [[nodiscard]]
     std::vector<std::uint8_t> compress(
         std::span<const std::uint8_t> input,
         std::uint64_t maxOutputSize
@@ -87,6 +99,24 @@ public:
     CompressionAlgorithm algorithm() const noexcept override
     {
         return CompressionAlgorithm::lz4;
+    }
+
+    [[nodiscard]]
+    std::size_t compressInto(
+        std::span<const std::uint8_t> input,
+        std::span<std::uint8_t> output
+    ) const override
+    {
+        const int inputSize = checkedLz4Size(input.size());
+        const int outputCapacity = checkedLz4Size(output.size());
+        const int written = LZ4_compress_default(
+            reinterpret_cast<const char*>(input.data()),
+            reinterpret_cast<char*>(output.data()),
+            inputSize,
+            outputCapacity);
+        if (written <= 0)
+            throw std::length_error("LZ4 compression output exceeds the limit");
+        return static_cast<std::size_t>(written);
     }
 
     [[nodiscard]]
